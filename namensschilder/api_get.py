@@ -36,7 +36,7 @@ def getJsonData(url, filename):
     results = []
 
     while url:
-        print(f'Read {url}..')
+        print(f'Read {url}')
         response = requests.get(url, headers=headers)
         if response.status_code != 200:
             raise Exception(f"Error: {response.status_code}\n\t{response.text}\n\t{response.url}")

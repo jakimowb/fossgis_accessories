@@ -29,11 +29,11 @@ PSEUDODATA: bool = False
 ORDER_CODES = None
 # ORDER_CODES = ['RK9LH']
 # ORDER_CODES = ['BPJ3S']
-ORDER_CODES = ['XYMHH']
+ORDER_CODES = ['XYMHH', 'BPJ3S']
 
 # if >0 -> beschränkt das aus der json generierte CSV auf CSV_LIMIT Zeilen.
 # Gut um schnell zu testen ob das PDF sinnvoll aussieht
-CSV_LIMIT: int = -1
+CSV_LIMIT: int = 10
 
 #
 QUESTION_CODES = {
@@ -322,7 +322,7 @@ def readBadgeInfos(DIR_JSON_DATA) -> Dict[str, BadgeInfo]:
             BADGES[badge.id()] = badge
     return BADGES
 
-def writeBadgeCsv(badgeInfos: Dict[str, BadgeInfo], path_csv: Path):
+def writeBadgeCsv(badgeInfos: Dict[str, BadgeInfo], path_csv: Path, max_rows = None):
     path_csv = Path(path_csv)
 
     badgeInfos = sorted([p for p in badgeInfos.values()], key=lambda p: p.family_name)
@@ -336,9 +336,10 @@ def writeBadgeCsv(badgeInfos: Dict[str, BadgeInfo], path_csv: Path):
         writer.writeheader()
 
         cnt = 0
-        for person in badgeInfos:
-            if CSV_LIMIT > 0 and cnt >= CSV_LIMIT:
+        for i, person in enumerate(badgeInfos):
+            if max_rows and i >= max_rows:
                 break
+
             data = {k: person.__dict__.get(k, None) for k in header}
             for k in list(data.keys()):
                 v = data[k]
@@ -415,5 +416,5 @@ if __name__ == '__main__':
         s = ""
 
     # 4. Schreibe badge CSV
-    writeBadgeCsv(badges, PATH_BADGE_CSV)
+    writeBadgeCsv(badges, PATH_BADGE_CSV, max_rows=CSV_LIMIT)
     print("\nNumber of attendees: " + str(len(badges)))
