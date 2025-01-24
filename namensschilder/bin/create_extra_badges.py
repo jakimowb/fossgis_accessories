@@ -5,7 +5,7 @@ import pathlib
 from typing import Dict, List
 from convert2024 import BadgeInfo, writeBadgeCsv
 
-path = pathlib.Path('extra_badges.csv')
+path = Path('extra_badges.csv')
 
 extra_badges: List[BadgeInfo] = [
     BadgeInfo(name='Anna Zagorski', company='Umweltbundesamt (UBA)',
@@ -42,7 +42,7 @@ extra_badges: List[BadgeInfo] = [
 ]
 
 
-extra_badges: Dict[str, BadgeInfo] = {b.name: b for b in extra_badges}
+extra_badges: Dict[str, BadgeInfo] = {b.given_name: b for b in extra_badges}
 
 if __name__ == '__main__':
     path = path.resolve()
