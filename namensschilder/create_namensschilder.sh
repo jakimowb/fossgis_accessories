@@ -12,23 +12,28 @@
 #  CSV = die *.csv datei mit den nötigen Angaben für Aussen- und Innenseite
 # set CSV=bin/badges.empty.csv
 
-export CSV=badges.D.csv # the real data
-#export CSV=pseudodata.badges.D.csv # testdata
-#export CSV="extra_badges.csv" # extrabadges
-echo "CREATING BADGES for CSV: $CSV"
-
+export BADGE_CSV=csv/badges2025_conf.csv # the input CSV
+export BADGE_PDF=csv/badges2025_conf.pdf # the final PDF
+echo "CREATING BADGES for CSV: BADGECSV"
 echo "Converting JSON to CSV"
-python3 bin/convert2024.py
+# python3 bin/convert2025.py
 
-echo "Sanitize csv"
-sed -i 's/\"//g' badges.D.csv
+echo "Sanitize $BADGE_CSV"
+sed -i 's/\"//g' $BADGE_CSV
 
-echo "writing inside of badges"
-pdflatex namensschilder2024_innen.tex
+echo "writing inner site of badges"
+pdflatex "\newcommand{\BadgeCSV}{$BADGE_CSV} \input{tex/namensschilder_innen.tex}"
+echo "writing visible site of badges"
+pdflatex "\newcommand{\BadgeCSV}{$BADGE_CSV} \input{tex/namensschilder_sichtbar.tex}"
+# echo "combine in- and outside"
+# pdflatex
 
-echo "writing outside of badges"
-pdflatex namensschilder2024_sichtbar.tex
+# pdflatex "\newcommand{\PDFSichtbar}{namensschilder_sichtbar.pdf} \newcommand{\PDFInnen}{namensschilder_innenseite.pdf} \input{namensschilder2023.tex}"
+#pdflatex namensschilder2024_innen.tex
 
-echo "combining in- and outside"
-pdflatex namensschilder2024.tex
+#echo "writing outside of badges"
+#pdflatex namensschilder2024_sichtbar.tex
+
+#echo "combining in- and outside"
+#pdflatex namensschilder2024.tex
 # qpdf --empty --collate=1 --pages namensschilder2024_sichtbar.pdf namensschilder2024_innen.pdf -- out.pdf
