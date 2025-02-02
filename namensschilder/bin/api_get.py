@@ -1,15 +1,30 @@
 #!/usr/bin/python3
 # -*- coding: utf-8 -*-
-
+"""
+Download der Pretix-Daten als JSON nach /namensschilder/data/<EventID>/*.json
+"""
 import requests
 import json
 import os
 from pathlib import Path
 
+## CONFIG START
+
+# die Event ID in Pretix
+# https://pretix.eu/control/event/fossgis/<EventID>
+EVENT_ID = "2025"
+
+## CONFIG END
+
+# wir brauchen einen API-Token (und damit er geheim bleibt,
+# sollte er hier nicht im code stehen!)
+# siehe https://docs.pretix.eu/en/latest/api/auth.html
+if not 'PRETIX_API_TOKEN' in os.environ:
+    raise Exception("PRETIX_API_TOKEN variable nicht definiert.")
+
 # URL-endpoints
 BASEURL = "https://pretix.eu/api/v1/organizers/fossgis/events/"
-EVENT_ID = "2025"
-# EVENT_ID = "demo-2020"
+
 # https://docs.pretix.eu/en/latest/api/resources/orders.html#get--api-v1-organizers-(organizer)-events-(event)-orders-
 ORDER_URL = BASEURL + EVENT_ID + "/orders/"
 # https://docs.pretix.eu/en/latest/api/resources/invoices.html#get--api-v1-organizers-(organizer)-events-(event)-invoices-
@@ -23,8 +38,6 @@ ITEM_CATEGORY_URL = BASEURL + EVENT_ID + "/categories/"
 
 QUESTIONS = BASEURL + EVENT_ID + "/questions/"
 
-if not 'PRETIX_API_TOKEN' in os.environ:
-    raise Exception("PRETIX_API_TOKEN variable nicht definiert.")
 
 # Auth*
 headers = {
@@ -51,12 +64,12 @@ def getJsonData(url, filename):
 
 # Call the functions to execute the code
 
-root = Path(__file__).parent / "data" / EVENT_ID
+root = Path(__file__).parents[1] / "data" / EVENT_ID
 os.makedirs(root, exist_ok=True)
 
 getJsonData(QUESTIONS, root / "questions.json")
 getJsonData(ITEM_CATEGORY_URL, root / "categories.json")
 getJsonData(ORDER_URL, root / "orders.json")
 getJsonData(INVOICE_URL, root / "invoices.json")
-getJsonData(NREI_URL, root / "nrei.json")
+# getJsonData(NREI_URL, root / "nrei.json")
 getJsonData(ITEMS_URL, root / "items.json")
