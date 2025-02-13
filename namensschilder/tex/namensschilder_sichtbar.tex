@@ -1,0 +1,145 @@
+
+\documentclass[a4paper, 12pt]{letter}
+\usepackage[total={210mm,297mm},top=0mm,left=0mm, bottom=0mm, top=0mm]{geometry}
+\usepackage[schilder,rowmode]{ticket}
+\usepackage{graphicx,palatino}
+\usepackage{xcolor}
+\usepackage{hyperref}
+\usepackage[utf8]{inputenc} 
+\usepackage{datatool}
+\usepackage[sfdefault]{ClearSans} %% option 'sfdefault' activates Clear Sans as the default text font
+\usepackage[T1]{fontenc}
+\usepackage{ifthen}
+\usepackage{adjustbox}
+\usepackage{xstring}
+\usepackage{tikz}
+
+ %\overfullrule 10pt
+ \hyphenpenalty 1000
+ \exhyphenpenalty 10000
+
+
+\renewcommand{\ticketdefault}{}%
+\makeatletter
+\@boxedtrue % Rahmen um Namensschild
+\@emptycrossmarkfalse % Falzmarken
+\@cutmarktrue % Schnittmarken
+\@crossmarktrue % Schnittmarken
+\makeatother
+
+\newcommand{\ticketLogoFOSSGIS}[0]{%
+    \put(5mm,55mm){\includegraphics[width=15mm]{img/logo_fossgis2025.pdf}}
+}
+
+\newcommand{\ticketLogoOSMSamstag}[0]{%
+    \put(5mm,55mm){\includegraphics[width=15mm]{img/logo_osmsamstag2025.pdf}}
+}
+
+
+\newcommand{\ticketLogoIFGIHACK}[0]{%
+    \put(5mm,55mm){\includegraphics[width=15mm]{img/logo_ifgihack2025.pdf}}
+}
+
+
+% Definiert 1 Badge -> wird 2x aufgerufen
+\newcommand{\badgesichtbar}[4]{\ticket{%
+    % #1 = badge names
+    % #2 = badge firmen/nickname in 2. Zeile
+    % #3 = AV
+    % #4 Ticket typ
+    %
+    % Breite DIN A 7 74mm x 105mm
+    % Hintergrundbild
+    \put(0,0){\includegraphics[width=105mm]{img/fossgis2025_background.pdf}}
+
+    % ticket type?
+    \IfStrEqCase{#4}{%
+        {Konferenzticket}{\ticketLogoFOSSGIS}
+        {Konferenzticket - reduzierter Preis}{\ticketLogoFOSSGIS}
+        {Konferenzticket Beitragende}{\ticketLogoFOSSGIS}
+        {Konferenzticket für Helfende}{\ticketLogoFOSSGIS}
+        {Konferenzticket für Helfende (bezahlt)}{\ticketLogoFOSSGIS}
+        {Konferenzticket Aussteller}{\ticketLogoFOSSGIS}
+        {Konferenzticket - Community (OpenStreetMap und FOSSGIS)}{\ticketLogoFOSSGIS}%
+        {Hackathon \#ifgiHACK25}{\ticketLogoIFGIHACK}%
+        {OpenStreetMap-Samstag}{\ticketLogoOSMSamstag}%
+    }[] % Default case
+
+   % Helfende? zeichne rote line ein
+   \IfStrEq{#4}{Konferenzticket für Helfende (bezahlt)}{%
+        %\put(25mm,58mm){
+        %\parbox{53mm}{
+        %    \textcolor{gray}{\rule{\linewidth}{1mm}}
+        %}
+        %}
+        \put(80mm,50mm){
+            \begin{tikzpicture}
+                \draw[orange, ultra thick] (0,2) -- (2,0);
+            \end{tikzpicture}
+        }
+   }
+
+    % Abendveranstaltung? dann zeige event.png oben rechts
+    \put(90mm,65mm){
+        \parbox{10mm}{
+        \raggedleft
+		\ifthenelse{\equal{#3}{True}}{\includegraphics[width=5mm]{img/event.png}} { } %%  CC BY-SA 4.0 https://openmoji.org/library/emoji-1F958/
+    }}
+
+    \put(5mm,35mm){
+
+       \adjustbox{%fbox, % zeichnet rahmen (für Positionierung)
+            color=gray,
+            minipage=[c][40mm]{90mm},
+            % max totalheight=70mm, max width=95mm
+            }{%
+            \begin{center}
+            \Huge \textbf{#1} \\
+            \vspace{1ex}
+            \large{#2}
+            \end{center}
+        }
+      }
+
+}}
+\newcounter{ticketcount}
+\newcommand{\badgename}{}
+\newcommand{\badgefirma}{}
+
+\begin{document}
+\DTLsetseparator{;}
+\DTLloaddb{CSV}{\BadgeCSV}
+\DTLforeach{CSV}{
+    \order=order,
+    \name=name,
+    \nameosm=name_osm,
+    \ticketype=ticket,
+    \vorname=vorname,
+    \av=av,
+    \schild=schild,
+    \schildfirma=schild_firma,
+    \schildnickname=schild_nickname}
+    {\typeout{Ticket \arabic{ticketcount}: \order  "\name "}%
+        \IfStrEqCase{\schild}{%
+            {Name + Firma}{%
+                \renewcommand{\badgename}{\vorname{} \name}%
+                \renewcommand{\badgefirma}{\schildfirma}}%
+            {Name + Nickname}{%
+                \renewcommand{\badgename}{\vorname{} \name}%
+                \renewcommand{\badgefirma}{\schildnickname}}%
+            {Name}{%
+                \renewcommand{\badgename}{\vorname{} \name}%
+                \renewcommand{\badgefirma}{}}%
+            {Nickname}{%
+                \renewcommand{\badgename}{\schildnickname}%
+                \renewcommand{\badgefirma}{}}%
+            }[\renewcommand{\badgename}{\vorname{} \name}%
+              \renewcommand{\badgefirma}{}]%
+            \IfStrEqCase{\ticketype}{%
+                {OpenStreetMap-Samstag}{\renewcommand{\badgefirma}{\nameosm}}%
+                }[]% Default case, no nick
+        \badgesichtbar{\badgename}{\badgefirma}{\av}{\ticketype}%
+        \badgesichtbar{\badgename}{\badgefirma}{\av}{\ticketype}%
+        \addtocounter{ticketcount}{1}%
+    }
+\end{document}

@@ -13,6 +13,7 @@ docker build --pull --rm -f "Dockerfile" -t  "."
 ### run image (interactive -it)
 ```
 docker run --rm -it  namensschilder:latest
+docker run -v $(pwd):/app -it --rm namensschilder:latest
 ```
 
 ## docker compose

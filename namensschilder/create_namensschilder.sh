@@ -12,10 +12,10 @@
 #  CSV = die *.csv datei mit den nötigen Angaben für Aussen- und Innenseite
 # set CSV=bin/badges.empty.csv
 
-export BADGE_CSV=csv/badges2025_conf.csv # the input CSV
+export BADGE_CSV=csv/badges2025_hackaton.csv # the input CSV
 export BADGE_PDF=csv/badges2025_conf.pdf # the final PDF
 echo "CREATING BADGES for CSV: BADGECSV"
-echo "Converting JSON to CSV"
+#echo "Converting JSON to CSV"
 # python3 bin/convert2025.py
 
 echo "Sanitize $BADGE_CSV"

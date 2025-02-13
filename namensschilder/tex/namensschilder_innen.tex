@@ -8,6 +8,7 @@
 \usepackage[utf8]{inputenc} 
 \usepackage{datatool} 
 \usepackage{ifthen}
+\usepackage{url}
 \usepackage[ngerman]{babel}
 \usepackage[sfdefault]{ClearSans} %% option 'sfdefault' activates Clear Sans as the default text font
 \usepackage[T1]{fontenc}
@@ -69,7 +70,8 @@
     \tshirt=tshirt,
     \mail=mail,
     \tb=tb}
-{\typeout{Ticket \arabic{ticketcount}: \order  "\name "}
+{ \typeout{Ticket \arabic{ticketcount}: \order  "\name "}
+  \DTLsubstituteall{\mail}{_}{\_}
   % order,name,vorname,mail,ticket,tshirt,tb,workshops,exkursionen
   % Badge Innen Links:
   \ticket{

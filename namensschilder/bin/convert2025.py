@@ -350,6 +350,7 @@ def writeBadgeCsv(badgeInfos: List[BadgeInfo], path_csv: Path, fill:bool=True):
     if n == 0:
         warnings.warn(Warning('empty list of badges'), stacklevel=2)
         return None
+
     badgeInfos = sorted([p for p in badgeInfos], key=lambda p: (p.name, p.vorname))
 
     if fill:
@@ -531,7 +532,7 @@ if __name__ == '__main__':
     if False:
         badges = readBadgeInfos(DIR_DATA)
     else:
-        #  pseudonimisierte Beispieldaten
+        #  pseudonymisierte Beispieldaten
         print('Create pseudo tickets')
         badges = readPseudoBadgeInfos(DIR_DATA)
 
