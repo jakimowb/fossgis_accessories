@@ -3,6 +3,7 @@
 """
 Erstellt eine CSV Datei aus der mit LaTeX die Namensschilder generiert werden.
 """
+import argparse
 import collections
 import csv
 import itertools
@@ -12,10 +13,10 @@ import warnings
 from pathlib import Path
 import re
 import sys
-from typing import Dict, List, Union, Optional
+from typing import Dict, List, Union, Optional, Tuple
 import os
 
-EVENT_ID = '2025'
+
 
 # hier ggf. eine Liste mit order codes nutzen um selektiv badges zu erstellen
 # https://pretix.eu/control/event/fossgis/2023/orders/<order code>/
@@ -25,10 +26,6 @@ ORDER_CODES = None
 # ORDER_CODES = ['BPJ3S']
 # ORDER_CODES = ['XYMHH', 'BPJ3S']
 
-# CSV_LIMIT
-# beschränkt das aus der json generierte CSV auf CSV_LIMIT Zeilen.
-# Gut um schnell zu testen ob das PDF sinnvoll aussieht
-CSV_LIMIT: int = None
 
 
 
@@ -98,13 +95,6 @@ REPLACE_IN_COMPANIES = {
 }
 
 # END SETTINGS
-
-
-ROOT = Path(__file__).parents[1]
-
-DIR_DATA = ROOT / 'data' / EVENT_ID
-PATH_ORDERS = DIR_DATA / 'orders.json'  # Bestelldaten
-PATH_ITEMS = DIR_DATA / 'items.json'  # Produktdaten
 
 
 class BadgeInfo(object):
@@ -228,6 +218,16 @@ def exkursionItemIDs(products, categories) -> List[int]:
 
 rx_online = re.compile('online', re.IGNORECASE)
 
+LUT_Wochennamen = {
+    'Montag': 'Mo',
+    'Dienstag': 'Di',
+    'Mittwoch': 'Mi',
+    'Donnerstag': 'Do',
+    'Freitag': 'Fr',
+    'Samstag': 'Sa',
+    'Sonntag': 'So',
+}
+
 def readBadgeInfos(dir_json) -> List[BadgeInfo]:
     BADGES: Dict[str, BadgeInfo] = {}
 
@@ -255,6 +255,8 @@ def readBadgeInfos(dir_json) -> List[BadgeInfo]:
     ExkursionIDs = exkursionItemIDs(PRODUCTS, CATEGORIES)
 
     PRODUCTS = {p['id']: p for p in PRODUCTS}
+    CATEGORIES = {c['id']: c for c in CATEGORIES}
+
     TICKETS = {pid:p for pid, p in PRODUCTS.items() if pid in TicketIDs}
     WORKSHOPS = {pid:p for pid, p in PRODUCTS.items() if pid in WorkshopIDs}
     EXKURSIONEN = {pid:p for pid, p in PRODUCTS.items() if pid in ExkursionIDs}
@@ -328,7 +330,15 @@ def readBadgeInfos(dir_json) -> List[BadgeInfo]:
                     value = True
 
                 if item_id in WorkshopIDs:
-                    badgeInfo.workshops.append(product_name)
+                    category = CATEGORIES[product['category']]
+                    ws_time = category['name']['de']
+                    ws_time = re.sub('Workshop|Uhr', '', ws_time).strip()
+                    for kn, k2 in LUT_Wochennamen.items():
+                        ws_time = re.sub(kn, k2, ws_time)
+                    ws_time = ws_time.strip()
+                    if ws_time == 'Do 9-10:30':
+                        ws_time = 'Do 09:00-10:30'
+                    badgeInfo.workshops.append(f'{ws_time}: {product_name}')
                 elif item_id in ExkursionIDs:
                     badgeInfo.exkursionen.append(product_name)
                 else:
@@ -523,26 +533,142 @@ def readJson(path):
     with open(path, 'r', encoding='utf-8') as f:
         return json.load(f)
 
+
+def writeWorkshopLists(badges: List[BadgeInfo], path_xlsx):
+    from openpyxl import load_workbook, Workbook
+    from openpyxl.cell import Cell
+    from openpyxl.worksheet.table import Table, TableStyleInfo
+    from openpyxl.worksheet.worksheet import Worksheet
+
+    badges = [b for b in badges if len(b.workshops) > 0]
+    path_xlsx = Path(path_xlsx)
+
+    if len(badges) == 0:
+        print('Keine Workshops gefunden', file=sys.stderr)
+        return
+
+    # sortiere nach Workshop
+    workshops:Dict[Tuple, List[BadgeInfo]] = dict()
+    rx_ws_name = re.compile(r'(?P<day>[^ ]+) (?P<time>[^ ]+): (?P<name>.+)$')
+    for b in badges:
+        for w in b.workshops:
+
+            match = rx_ws_name.match(w)
+            ws_day = match.group('day')
+            ws_time = match.group('time')
+            ws_name = match.group('name')
+
+            k = (ws_day, ws_time, ws_name)
+            workshops[k] = workshops.get(k, []) + [b]
+
+    if path_xlsx.is_file():
+        book = load_workbook(filename=path_xlsx.as_posix())
+    else:
+        book = Workbook()
+    for s in book.sheetnames[:]:
+        del book[s]
+
+    for day in LUT_Wochennamen.values():
+        ws_keys = [w for w in workshops.keys() if w[0] == day]
+        if len(ws_keys) > 0:
+            sheetName = day
+            if sheetName in book.sheetnames:
+                sheetP = book[sheetName]
+                sheetP.delete_cols(1, sheetP.max_column)
+            else:
+                sheetP = book.create_sheet(sheetName)
+
+            row = 1
+            for c, n in enumerate(['Tag', 'Zeit', 'Workshop', 'Name', 'Vorname', 'Mail', 'Order']):
+                sheetP.cell(row, 1 + c, n)
+
+            for ws_key in sorted(ws_keys, key=lambda k:(k[1],k[2])):
+                for badge in sorted(workshops[ws_key], key=lambda b: (b.vorname, b.name)):
+                    row += 1
+                    for c, value in enumerate(list(ws_key) + [badge.name, badge.vorname, badge.mail, badge.order]):
+                        sheetP.cell(row, 1 + c, value)
+            table_range = f"A1:G{row}"
+            table = Table(displayName=f"Tabelle_{day}", ref=table_range)
+            style = TableStyleInfo(
+                name="TableStyleMedium9",
+                showFirstColumn=False,
+                showLastColumn=False,
+                showRowStripes=True,  # Alternierende Zeilenfarben
+                showColumnStripes=False
+            )
+            sheetP.add_table(table)
+
+    # Automatische Spaltenbreite berechnen
+    def enlare_columns(sheet: Worksheet):
+        for col in sheet.columns:
+            max_length = 0
+            col_letter = col[0].column_letter  # Holt den Buchstaben der Spalte
+
+            for cell in col:
+                try:
+                    if cell.value:
+                        max_length = max(max_length, len(str(cell.value)))
+                except:
+                    pass
+
+            sheet.column_dimensions[col_letter].width = max_length + 2  # Puffer hinzufügen
+
+    for s in book.sheetnames:
+        sheet = book[s]
+        enlare_columns(sheet)
+
+    path_xlsx = Path(path_xlsx)
+    book.save(path_xlsx.as_posix())
+
+
+
 if __name__ == '__main__':
+
+    parser = argparse.ArgumentParser(description='Erstelle Badges & Listen')
+    parser.add_argument('-p', '--pseudodata',
+                        required=False,
+                        default=False,
+                        help='Verwende pseudonomisierte daten, etwa für eine Vorschau',
+                        action='store_true')
+    parser.add_argument('-w', '--workshoplisten',
+                        required=False,
+                        default=True,
+                        help='Schreibe workshoplisten',
+                        action='store_true')
+
+    parser.add_argument('--csv_limit',
+                        required=False,
+                        default=None,
+                        help='Limitiere CSV outputs auf n zeilen',
+                        )
+
+    # CSV_LIMIT
+    # beschränkt das aus der json generierte CSV auf CSV_LIMIT Zeilen.
+    # Gut um schnell zu testen ob das PDF sinnvoll aussieht
+    CSV_LIMIT: int = None
+
+    args = parser.parse_args()
+
+    EVENT_ID = '2025'
+    ROOT = Path(__file__).parents[1]
+    DIR_DATA = ROOT / 'data' / EVENT_ID
+    PATH_ITEMS = DIR_DATA / 'items.json'  # Produktdaten
 
     DIR_CSV = ROOT / 'csv'
     os.makedirs(DIR_CSV, exist_ok=True)
 
     # 1. read badges
-    if False:
-        badges = readBadgeInfos(DIR_DATA)
-    else:
+    if args.pseudodata:
         #  pseudonymisierte Beispieldaten
         print('Create pseudo tickets')
         badges = readPseudoBadgeInfos(DIR_DATA)
+    else:
+        badges = readBadgeInfos(DIR_DATA)
 
-
-    if False:
+    if args.workshoplisten:
         # schreibe Workshop liste
-        workshops = set()
-        for b in badges:
-            for w in b.workshops:
-                workshops.add(w)
+        path_xlsx = DIR_CSV / f'badges{EVENT_ID}_workshops.xlsx'
+        writeWorkshopLists(badges, path_xlsx)
 
     if True:
         # 3. Separiere nach Ticket
@@ -558,8 +684,10 @@ if __name__ == '__main__':
         for prefix, suffix in ticket_types.items():
             ticket_badges = [v for v in badges if v.ticket.startswith(prefix)]
             path_csv = DIR_CSV / f'badges{EVENT_ID}_{suffix}.csv'
-            if CSV_LIMIT:
-                ticket_badges = tickets_badges[:min(len(ticket_badges),max_rows)]
+
+            if args.csv_limit:
+                ticket_badges = ticket_badges[:min(len(ticket_badges),args.csv_limit)]
+
             if len(ticket_badges) > 0:
                 writeBadgeCsv(ticket_badges, path_csv)
                 print(f'{path_csv} : {len(ticket_badges)} tickets')
@@ -575,6 +703,6 @@ if __name__ == '__main__':
         badges = [BadgeInfo() for i in range(emptyBadges)]
         path_csv = DIR_CSV / f'badges{EVENT_ID}_leer.csv'
         writeBadgeCsv(badges, path_csv)
-        print(f'{path_csv} : {len(badges)} tickes')
+        print(f'{path_csv} : {len(badges)} tickets')
 
 

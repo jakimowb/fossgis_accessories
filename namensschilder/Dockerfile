@@ -8,7 +8,8 @@ RUN apt install -y texlive-bibtex-extra
 RUN apt install -y texlive-latex-base 
 RUN apt install -y texlive-latex-extra 
 RUN apt install -y texlive-font-utils 
-RUN apt install -y texlive-lang-german 
+RUN apt install -y texlive-lang-german
+RUN apt install -y python3-openpyxl
 RUN apt install -y curl locales && \
     apt clean && \  
     rm -rf /var/lib/apt/lists/*

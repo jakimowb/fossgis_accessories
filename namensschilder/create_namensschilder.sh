@@ -14,25 +14,35 @@
 
 export BADGE_CSV=csv/badges2025_hackaton.csv # the input CSV
 export BADGE_PDF=csv/badges2025_conf.pdf # the final PDF
-echo "CREATING BADGES for CSV: BADGECSV"
-#echo "Converting JSON to CSV"
-# python3 bin/convert2025.py
 
-echo "Sanitize $BADGE_CSV"
-sed -i 's/\"//g' $BADGE_CSV
+echo "Converting JSON to CSV"
+python3 bin/convert2025.py
 
-echo "writing inner site of badges"
-pdflatex "\newcommand{\BadgeCSV}{$BADGE_CSV} \input{tex/namensschilder_innen.tex}"
-echo "writing visible site of badges"
-pdflatex "\newcommand{\BadgeCSV}{$BADGE_CSV} \input{tex/namensschilder_sichtbar.tex}"
-# echo "combine in- and outside"
-# pdflatex
+mkdir -p pdf
 
-# pdflatex "\newcommand{\PDFSichtbar}{namensschilder_sichtbar.pdf} \newcommand{\PDFInnen}{namensschilder_innenseite.pdf} \input{namensschilder2023.tex}"
-#pdflatex namensschilder2024_innen.tex
+# create the PDFs
+for badge_csv in csv/*.csv; do
+    if [ -f "$badge_csv" ]; then
 
-#echo "writing outside of badges"
-#pdflatex namensschilder2024_sichtbar.tex
+        echo "Sanitize $badge_csv"
+        sed -i 's/\"//g' "$badge_csv"
+
+        echo "writing inner site of badges"
+        jobname=$(basename -a $badge_csv)
+        jobname="${jobname%.csv}"
+
+        echo "Create ${jobname} PDFs"
+        echo "writing invisible site of badges"
+        pdflatex -jobname="pdf/${jobname}_innen" "\newcommand{\BadgeCSV}{$badge_csv} \input{tex/namensschilder_innen.tex}"
+        echo "writing visible site of badges"
+        pdflatex -jobname="pdf/${jobname}_aussen" "\newcommand{\BadgeCSV}{$badge_csv} \input{tex/namensschilder_sichtbar.tex}"
+    fi
+done
+
+echo "Cleanup"
+rm -f pdf/*.aux
+rm -f pdf/*.log
+rm -f pdf/*.out
 
 #echo "combining in- and outside"
 #pdflatex namensschilder2024.tex
