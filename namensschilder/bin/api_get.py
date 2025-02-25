@@ -96,7 +96,7 @@ if __name__ == '__main__':
                                                  'zur weiteren Verarbeitung')
     parser.add_argument('-o', '--output',
                         type=str,
-                        default=Path(__file__).parents[1] / "data" ,
+                        default=Path(__file__).parents[1] / "json" ,
                         help='Ausgabeordner für die JSON-Dateien')
     parser.add_argument('-y', '--year',
                         type=int,
@@ -130,13 +130,13 @@ if __name__ == '__main__':
     if pretix_token is None and pretalx_token is None:
         raise ValueError('Es wurde weder ein Pretix- noch ein Pretalx-Token angegeben')
 
-    if pretalx_token:
+    if False and pretalx_token:
         event_id = f'fossgis{args.year}'
         read_pretalx(event_id, pretalx_token, dir_output)
 
     if pretix_token:
         event_id = f'{args.year}'
-        read_pretix(event_id, pretalx_token, dir_output)
+        read_pretix(event_id, pretix_token, dir_output)
 
 
 
