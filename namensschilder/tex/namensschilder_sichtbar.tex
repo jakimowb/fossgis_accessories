@@ -1,6 +1,6 @@
 
 \documentclass[a4paper, 12pt]{letter}
-\usepackage[total={210mm,297mm},top=0mm,left=0mm, bottom=0mm, top=0mm]{geometry}
+\usepackage[total={210mm,297mm},top=0mm,left=0mm,bottom=0mm,top=0mm]{geometry}
 \usepackage[schilder,rowmode]{ticket}
 \usepackage{graphicx,palatino}
 \usepackage{xcolor}
@@ -21,7 +21,7 @@
 
 \renewcommand{\ticketdefault}{}%
 \makeatletter
-\@boxedtrue % Rahmen um Namensschild
+\@boxedfalse % Rahmen um Namensschild
 \@emptycrossmarkfalse % Falzmarken
 \@cutmarktrue % Schnittmarken
 \@crossmarktrue % Schnittmarken
@@ -72,18 +72,30 @@
         %    \textcolor{gray}{\rule{\linewidth}{1mm}}
         %}
         %}
-        \put(80mm,50mm){
-            \begin{tikzpicture}
-                \draw[orange, ultra thick] (0,2) -- (2,0);
+
+        %\put(80mm,50mm){
+        %    \begin{tikzpicture}
+        %        \draw[orange, ultra thick] (0,2) -- (2,0);
+        %    \end{tikzpicture}
+        %}
+        \put(30mm,57mm){
+        \begin{tikzpicture}
+                %\draw[orange, line width=2mm] (0,0) -- (5.2,0);
+                \draw[orange, ultra thick] (0,0) -- (5.3,0);
             \end{tikzpicture}
         }
+        \put(82mm,65mm){
+        \parbox{10mm}{
+        \raggedleft
+		\Huge \textcolor{orange}{H}
+    }}
    }
 
     % Abendveranstaltung? dann zeige event.png oben rechts
     \put(90mm,65mm){
         \parbox{10mm}{
         \raggedleft
-		\ifthenelse{\equal{#3}{True}}{\includegraphics[width=5mm]{img/event.png}} { } %%  CC BY-SA 4.0 https://openmoji.org/library/emoji-1F958/
+		\ifthenelse{\equal{#3}{True}}{\includegraphics[width=5mm]{img/logo_abendveranstaltung.pdf}} { }
     }}
 
     \put(5mm,35mm){
@@ -109,6 +121,8 @@
 \begin{document}
 \DTLsetseparator{;}
 \DTLloaddb{CSV}{\BadgeCSV}
+%\DTLloadrawdb{CSV}{\BadgeCSV}
+
 \DTLforeach{CSV}{
     \order=order,
     \name=name,
@@ -120,6 +134,12 @@
     \schildfirma=schild_firma,
     \schildnickname=schild_nickname}
     {\typeout{Ticket \arabic{ticketcount}: \order  "\name "}%
+    \DTLsubstituteall{\name}{_}{\_}%
+    \DTLsubstituteall{\vorname}{_}{\_}%
+    \DTLsubstituteall{\nameosm}{_}{\_}%
+    \DTLsubstituteall{\schildfirma}{_}{\_}%
+    \DTLsubstituteall{\schildfirma}{&}{\&}%
+    \DTLsubstituteall{\schildnickname}{_}{\_}%
         \IfStrEqCase{\schild}{%
             {Name + Firma}{%
                 \renewcommand{\badgename}{\vorname{} \name}%
@@ -135,9 +155,9 @@
                 \renewcommand{\badgefirma}{}}%
             }[\renewcommand{\badgename}{\vorname{} \name}%
               \renewcommand{\badgefirma}{}]%
-            \IfStrEqCase{\ticketype}{%
-                {OpenStreetMap-Samstag}{\renewcommand{\badgefirma}{\nameosm}}%
-                }[]% Default case, no nick
+            %\IfStrEqCase{\ticketype}{%
+            %    {OpenStreetMap-Samstag}{\renewcommand{\badgefirma}{\nameosm}}%
+            %    }[]% Default case, no nick
         \badgesichtbar{\badgename}{\badgefirma}{\av}{\ticketype}%
         \badgesichtbar{\badgename}{\badgefirma}{\av}{\ticketype}%
         \addtocounter{ticketcount}{1}%
