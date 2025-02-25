@@ -19,3 +19,4 @@ pretix.csv
 namensschilder/workshopliste.tex
 *.synctex(busy)
 namensschilder/data
+namensschilder/json
