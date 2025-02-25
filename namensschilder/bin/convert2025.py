@@ -1,22 +1,26 @@
 #!/usr/bin/python3
 # -*- coding: utf-8 -*-
-"""
-Erstellt eine CSV Datei aus der mit LaTeX die Namensschilder generiert werden.
-"""
+
 import argparse
-import collections
 import csv
-import itertools
+import datetime
 import json
+import locale
 import random
 import warnings
 from pathlib import Path
 import re
 import sys
-from typing import Dict, List, Union, Optional, Tuple
+from typing import Dict, List, Optional, Tuple, Union
 import os
 
+from openpyxl import load_workbook, Workbook
+from openpyxl.cell import Cell
+from openpyxl.worksheet.table import Table, TableStyleInfo
+from openpyxl.worksheet.worksheet import Worksheet
+from openpyxl.styles import Alignment, Border, Font, Side
 
+locale.setlocale(locale.LC_TIME, "de_DE.utf8")
 
 # hier ggf. eine Liste mit order codes nutzen um selektiv badges zu erstellen
 # https://pretix.eu/control/event/fossgis/2023/orders/<order code>/
@@ -25,8 +29,6 @@ ORDER_CODES = None
 # ORDER_CODES = ['RK9LH']
 # ORDER_CODES = ['BPJ3S']
 # ORDER_CODES = ['XYMHH', 'BPJ3S']
-
-
 
 
 # Hier die Fragecodes eintragen, deren Antworten in die CSV übernommen werden sollen
@@ -40,6 +42,7 @@ CSV_QUESTIONS = {
     'EA7G3AUG': 'name_engel1',
     'NAKTGXCW': 'name_engel2',
     'YNH7QNRG': 'name_osm',
+    'QVL8CBHQ': 'tn_liste',
 }
 
 # Hier die Produkte (aka Items) eintragen, deren Antworten als Spalte in die CSV übernommen werden sollen
@@ -48,7 +51,7 @@ CSV_QUESTIONS = {
 # {Produktname oder Product ID : CSV Spaltenname}
 #
 CSV_PRODUCTS = {
-    'Konferenz-T-Shirt' : 'tshirt',
+    'Konferenz-T-Shirt': 'tshirt',
     'Konferenz-T-Shirt Helfende': 'tshirt_helfer',
     'Ich nehme an der Abendveranstaltung teil.': 'av',
     'Ich möchte einen gedruckten Tagungsband erhalten.': 'tb',
@@ -61,38 +64,14 @@ EXKURSIONEN = [
     675184,
 ]
 
-
 # Hier können typos korrigiert, Firmennamen gekürzt und vereinheitlicht werden
 DELETE_FROM_NAMES = [
-    re.compile(r'FD Vermesssung und Geodaten Stadt Hildesheim[ ]*'),
-    re.compile(r'Software Development[ ]*'),
-    re.compile(r'Web GIS Freelance[ ]*'),
-    re.compile(r'.* Consultants[ ]*'),
-    re.compile(r'.* GmbH[ ]*'),
-    re.compile(r'FH Aachen[ ]*'),
-    re.compile(r'NTI Deutschland.*'),
+    # re.compile(r'FD Vermesssung und Geodaten Stadt Hildesheim[ ]*'),
 ]
 REPLACE_IN_COMPANIES = {
-    'Bundesamt für Kartographie und Geodäsie': re.compile('(BKG|Bundesamt für Kartographie und Geodäsie)'),
-    'WhereGroup GmbH': re.compile(r'WhereGrouo?p GmbH', re.I),
-    'DB Systel GmbH': re.compile('DB Systel GmbH c/o Deutsche Bahn AG'),
-    'Landesamt für Geoinformation und Landesvermessung Niedersachsen': re.compile(
-        r'LGLN|Landesamt für Geoinformation und Landesvermessung Niedersachsen', re.I),
-    'Landesamt für Vermessung und Geobasisinformation Rheinland-Pfalz': re.compile(
-        r'Landesamt für Vermessung und Geobasisinformation Rheinland-Pfalz', re.I),
-    'Landesamt für Geoinformation und Landentwicklung Baden-Württemberg':
-        re.compile(r'Landesamt für Geoinformation und Landentwicklung (Baden-Württemberg|BW)', re.I),
-    'Landesvermessung und Geobasisinformation Brandenburg': re.compile('^LGB$'),
-    'Staatsbibliothek zu Berlin': re.compile(r'staatsbibliothek zu berlin', re.I),
-    'Umweltbundesamt (UBA)': re.compile(r'umweltbundesamt|\(UBA\)', re.I),
-    'Stadt Leipzig': re.compile(r'Stadt Leipzig', re.I),
-    'Technische Universität Chemnitz': re.compile('Technische Universität Chemnitz'),
-    'Bezirksamt Tempelhof-Schöneberg von Berlin': re.compile(r'Bezirksamt Tempelhof-Schöneberg von Berlin', re.I),
-    'DB Fahrwegdienste GmbH': re.compile(r'DB Fahrwegdienste GmbH', re.I),
-    'Landesamt für Geoinformation & Landesvermessung Niedersachsen': re.compile('LGLN'),
-    'Leibniz-Zentrum für Agrarlandschaftsforschung (ZALF)': re.compile('ZALF'),
-    'Deutsches Zentrum für Luft- und Raumfahrt (DLR)': re.compile('Deutsches Zentrum für Luft- und Raumfahrt'),
+    # 'Bundesamt für Kartographie und Geodäsie': re.compile('(BKG|Bundesamt für Kartographie und Geodäsie)'),
 }
+
 
 # END SETTINGS
 
@@ -118,8 +97,6 @@ class BadgeInfo(object):
             assert q not in self.__dict__.keys(), 'Duplicate key: ' + q
             self.__dict__[q] = None
 
-
-
     def id(self) -> str:
         return f'{self.order}{self.posid}'
 
@@ -137,32 +114,14 @@ class csvDialect(csv.Dialect):
     quoting = csv.QUOTE_MINIMAL
 
 
-def normalizeName(name: str) -> str:
-    """
-
-    :param name:
-    :return:
-    """
-    name = name.replace(", BSc", "")
-    if name.find(" (") > 0:
-        name = name[:name.find(" (")]
-    name = re.sub(r'Dipl\.-(Ing|Geogr|Geol)\.[ ]+]', '', name)
-    name = re.sub(
-        r'(FD Vermesssung und Geodaten Stadt Hildesheim|Staatsbibliothek zu Berlin|Development and Operations| / Sourcepole)[ ]*',
-        '', name)
-    if ',' in name:
-        name = ' '.join(reversed(re.split(r'[ ]*,[ ]*', name)))
-    return name
-
-
 # escape LaTeX characters
 # credits to https://stackoverflow.com/questions/16259923/how-can-i-escape-latex-special-characters-inside-django-templates
 conv = {
-    '&': r'\&',
+    # '&': r'\&',
     '%': r'\%',
     '$': r'\$',
     '#': r'\#',
-    '_': r'\_',
+    # '_': r'\_',
     '{': r'\{',
     '}': r'\}',
     '~': r'\textasciitilde{}',
@@ -183,6 +142,7 @@ def tex_escape(text: Optional[str]) -> str:
         return ''
     return rx_tex_escape.sub(lambda match: conv[match.group()], text)
 
+
 def replace_strings(text: str, replacements: dict):
     for newtext, oldtext in replacements.items():
         if isinstance(oldtext, str):
@@ -191,8 +151,10 @@ def replace_strings(text: str, replacements: dict):
             return newtext
     return text
 
-def itemName(item:dict) -> str:
+
+def itemName(item: dict) -> str:
     return item['name']['de']
+
 
 def ticketItemIDs(products) -> List[int]:
     """
@@ -207,14 +169,16 @@ def ticketItemIDs(products) -> List[int]:
 
     return [item['id'] for item in on_site]
 
-def workshopItemIDs(products, categories) -> List[int]:
 
+def workshopItemIDs(products, categories) -> List[int]:
     cat_ids = [c['id'] for c in categories if re.search('^Workshop', itemName(c), re.IGNORECASE)]
     return [p['id'] for p in products if p['category'] in cat_ids]
+
 
 def exkursionItemIDs(products, categories) -> List[int]:
     cat_ids = [c['id'] for c in categories if re.search('Exkursion', itemName(c), re.IGNORECASE)]
     return [p['id'] for p in products if p['category'] in cat_ids]
+
 
 rx_online = re.compile('online', re.IGNORECASE)
 
@@ -228,22 +192,22 @@ LUT_Wochennamen = {
     'Sonntag': 'So',
 }
 
+
 def readBadgeInfos(dir_json) -> List[BadgeInfo]:
     BADGES: Dict[str, BadgeInfo] = {}
 
     dir_json = Path(dir_json)
     assert dir_json.is_dir()
 
-    PRODUCTS = readJson(dir_json / 'items.json')
-    CATEGORIES = readJson(dir_json / 'categories.json')
-    QUESTIONS = readJson(dir_json / 'questions.json')
+    PRODUCTS = readJson(dir_json / 'pretix_items.json')
+    CATEGORIES = readJson(dir_json / 'pretix_categories.json')
+    QUESTIONS = readJson(dir_json / 'pretix_questions.json')
 
-    ORDERS = readJson(DIR_DATA / 'orders.json')
+    ORDERS = readJson(DIR_JSON / 'pretix_orders.json')
     if isinstance(ORDER_CODES, list):
         ORDERS = [o for o in ORDERS if o['code'] in ORDER_CODES]
 
-
-    def itemIDs(pattern:str, is_category=False) -> List[int]:
+    def itemIDs(pattern: str, is_category=False) -> List[int]:
         if is_category:
             cat_ids = [c['id'] for c in CATEGORIES if re.search(pattern, c['name']['de'])]
             return [p['id'] for p in PRODUCTS if p['category'] in cat_ids]
@@ -257,13 +221,20 @@ def readBadgeInfos(dir_json) -> List[BadgeInfo]:
     PRODUCTS = {p['id']: p for p in PRODUCTS}
     CATEGORIES = {c['id']: c for c in CATEGORIES}
 
-    TICKETS = {pid:p for pid, p in PRODUCTS.items() if pid in TicketIDs}
-    WORKSHOPS = {pid:p for pid, p in PRODUCTS.items() if pid in WorkshopIDs}
-    EXKURSIONEN = {pid:p for pid, p in PRODUCTS.items() if pid in ExkursionIDs}
+    TICKETS = {pid: p for pid, p in PRODUCTS.items() if pid in TicketIDs}
+    WORKSHOPS = {pid: p for pid, p in PRODUCTS.items() if pid in WorkshopIDs}
+    EXKURSIONEN = {pid: p for pid, p in PRODUCTS.items() if pid in ExkursionIDs}
 
+    SKIP_ORDER_STATE = {
+        'e': 'expired',
+        'c': 'canceled'
+    }
     # Lese Bestellungen
     for order in ORDERS:
         ORDERCODE = order['code']
+        if order['status'] in SKIP_ORDER_STATE:
+            print(f'Order {SKIP_ORDER_STATE[order['status']]}: {ORDERCODE}', file=sys.stderr)
+            continue
         ORDER_BADGES = {}
         # Lese Positionen
         # eine Bestellung kann verschiedene Tickets beinhalten, denen wiederum andere positionen
@@ -273,7 +244,7 @@ def readBadgeInfos(dir_json) -> List[BadgeInfo]:
         unhandled_positions = {p['id']: p for p in order['positions']}
 
         # 1. Tickets lesen
-        for (pid, pos) in [(pid,pos) for pid, pos in unhandled_positions.items() if pos['item'] in TicketIDs]:
+        for (pid, pos) in [(pid, pos) for pid, pos in unhandled_positions.items() if pos['item'] in TicketIDs]:
             item_id = pos['item']
             badgeInfo = BadgeInfo(ORDERCODE, pos['positionid'])
             badgeInfo.mail = pos['attendee_email']
@@ -300,7 +271,7 @@ def readBadgeInfos(dir_json) -> List[BadgeInfo]:
         # 2. Workshops lesen
 
         # 3. Verbleibenden Positionen den erstellten Badges zuordnen
-        for (pid, pos) in [(pid,pos) for pid, pos in unhandled_positions.items()]:
+        for (pid, pos) in [(pid, pos) for pid, pos in unhandled_positions.items()]:
             pos = unhandled_positions[pid]
             item_id = pos['item']
             product = PRODUCTS[item_id]
@@ -347,13 +318,13 @@ def readBadgeInfos(dir_json) -> List[BadgeInfo]:
                     elif product_id in CSV_PRODUCTS:
                         setattr(badgeInfo, CSV_PRODUCTS[product_id], value)
 
-
         for badge in ORDER_BADGES.values():
             assert badge.id() not in BADGES
             BADGES[badge.id()] = badge
     return list(BADGES.values())
 
-def writeBadgeCsv(badgeInfos: List[BadgeInfo], path_csv: Path, fill:bool=True):
+
+def writeBadgeCsv(badgeInfos: List[BadgeInfo], path_csv: Path, fill: bool = True):
     path_csv = Path(path_csv)
 
     n = len(badgeInfos)
@@ -367,6 +338,7 @@ def writeBadgeCsv(badgeInfos: List[BadgeInfo], path_csv: Path, fill:bool=True):
         while not len(badgeInfos) % 4 == 0:
             badgeInfos.append(BadgeInfo())
 
+    print(f'Write {path_csv}')
     with (open(path_csv, 'w', encoding='utf-8', newline='') as file):
 
         # schreibe alle Attribute als CSV Spalte
@@ -403,9 +375,10 @@ def writeBadgeCsv(badgeInfos: List[BadgeInfo], path_csv: Path, fill:bool=True):
                         latex = '0'
                     v = latex
                 elif isinstance(v, str):
-                    #if k == 'company':
+                    # if k == 'company':
                     #    v = replace_strings(v, REPLACE_IN_COMPANIES)
                     v = tex_escape(v)
+                    pass
 
                 if k in ['name', 'vorname']:
                     # Füge bei sehr langen Namen ein Leerzeichen ein
@@ -433,20 +406,16 @@ def writeBadgeCsv(badgeInfos: List[BadgeInfo], path_csv: Path, fill:bool=True):
 
 
 def readPseudoBadgeInfos(dir_data: Union[str, Path]) -> List[BadgeInfo]:
-
     dir_data = Path(dir_data)
     assert dir_data.is_dir()
     # es werden verändert: Namen, Vornamen, emails, firmennamem
     # es wird genutzt: tatsächliche Bestelloptionen aus dem Pretix
 
-
-
-    names = [('Max', 'Mustermann'),
-             ('Maria','Musterfrau'),
+    names = [('Max', 'Musterfamilie'),
+             ('Maria', 'Musterfamilie'),
+             ('Moritz', 'Musterfamilie'),
              ('Max', 'Power'),
-             ('Dorothea-Doppelname', 'Familien-Doppelname'),
-             ('Dreifach Langer Vorname', 'von und zu Familienname'),
-             ('Jakob', 'Nachname1-Nachname2-Nachname3'),
+             ('Langer-Doppelname', 'Ganz-Langer Familienname'),
              ('Isabel', 'Isernhagen'),
              ('Anna', 'Annaberg'),
              ('Charlotte', 'Charlottenburg'),
@@ -462,10 +431,9 @@ def readPseudoBadgeInfos(dir_data: Union[str, Path]) -> List[BadgeInfo]:
              ('Prinzessin', 'Leia'),
              ('Lord Darth', 'Vader'),
              ('Jean-Luc', 'Piccard'),
-            ]
+             ]
 
-
-    firmen = ['Firma In-der-Kürze-liegt die Würze GmbH mit langem Namen',
+    firmen = ['Firma mit sehr langem Namen',
               'Bundesamt für XY und Z',
               'Obelix Hinkelstein & Co GmbH',
               ]
@@ -505,7 +473,7 @@ def readPseudoBadgeInfos(dir_data: Union[str, Path]) -> List[BadgeInfo]:
 
     letters = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'
 
-    for (vorname, name) in names: # itertools.product(tickets, names) :
+    for (vorname, name) in names:  # itertools.product(tickets, names) :
         badge = BadgeInfo()
         badge.name = name
         badge.vorname = vorname
@@ -522,90 +490,234 @@ def readPseudoBadgeInfos(dir_data: Union[str, Path]) -> List[BadgeInfo]:
         badge.schild = schild
         if 'Firma' in schild:
             badge.schild_firma = random.choice(firmen)
-        if  'Nickname' in schild:
+        if 'Nickname' in schild:
             badge.schild_nickname = 'nick_' + vorname.lower()
         badge.notes = rnd(notes)
         badge.firma = random.choice(firmen)
+
+        if (badge.vorname, badge.name) == ('Moritz', 'Musterfamilie'):
+            badge.av = True
+            badge.ticket = 'Konferenzticket für Helfende (bezahlt)'
+
         BADGES.append(badge)
     return BADGES
+
 
 def readJson(path):
     with open(path, 'r', encoding='utf-8') as f:
         return json.load(f)
 
 
-def writeWorkshopLists(badges: List[BadgeInfo], path_xlsx):
-    from openpyxl import load_workbook, Workbook
-    from openpyxl.cell import Cell
-    from openpyxl.worksheet.table import Table, TableStyleInfo
-    from openpyxl.worksheet.worksheet import Worksheet
+def remove_ws(s: str) -> str:
+    return re.sub(r'\s+', ' ', s).strip()
 
-    badges = [b for b in badges if len(b.workshops) > 0]
+
+def get_sheet(name: str, book: Workbook) -> Worksheet:
+    if name in book.sheetnames:
+        sheet = book[name]
+        sheet.delete_cols(1, sheet.max_column)
+    else:
+        sheet = book.create_sheet(name)
+    return sheet
+
+
+def get_workbook(path_xlsx: Union[str, Path]) -> Workbook:
     path_xlsx = Path(path_xlsx)
-
-    if len(badges) == 0:
-        print('Keine Workshops gefunden', file=sys.stderr)
-        return
-
-    # sortiere nach Workshop
-    workshops:Dict[Tuple, List[BadgeInfo]] = dict()
-    rx_ws_name = re.compile(r'(?P<day>[^ ]+) (?P<time>[^ ]+): (?P<name>.+)$')
-    for b in badges:
-        for w in b.workshops:
-
-            match = rx_ws_name.match(w)
-            ws_day = match.group('day')
-            ws_time = match.group('time')
-            ws_name = match.group('name')
-
-            k = (ws_day, ws_time, ws_name)
-            workshops[k] = workshops.get(k, []) + [b]
-
     if path_xlsx.is_file():
         book = load_workbook(filename=path_xlsx.as_posix())
     else:
         book = Workbook()
     for s in book.sheetnames[:]:
         del book[s]
+    return book
 
-    for day in LUT_Wochennamen.values():
-        ws_keys = [w for w in workshops.keys() if w[0] == day]
-        if len(ws_keys) > 0:
-            sheetName = day
-            if sheetName in book.sheetnames:
-                sheetP = book[sheetName]
-                sheetP.delete_cols(1, sheetP.max_column)
-            else:
-                sheetP = book.create_sheet(sheetName)
+
+thin_bottom_border = Border(bottom=Side(style='thin'))
+bold_font = Font(bold=True)
+top_alignment = Alignment(vertical="top")
+
+
+def writeParticipantsList(badges: List[BadgeInfo], path_xlsx: Union[str, Path]):
+    path_xlsx = Path(path_xlsx)
+
+    badges = sorted([b for b in badges if b.tn_liste], key=lambda b: (b.name, b.vorname))
+
+    book = get_workbook(path_xlsx)
+    sheet = get_sheet('Teilnehmer', book)
+
+    sheet.cell(1, 1, 'Teilnehmer FOSSGIS 2025')
+    sheet.merge_cells('A1:D1')
+    row = 3
+    for c, n in enumerate(['Name', 'Vorname', 'Email', 'Firma/Organisation']):
+        sheet.cell(row, c + 1, n)
+        sheet.cell(row, c + 1).border = thin_bottom_border
+        sheet.cell(row, c + 1).font = bold_font
+
+    for b in badges:
+        row += 1
+        infos = [b.name, b.vorname, b.mail, b.firma]
+
+        for c, info in enumerate(infos):
+            sheet.cell(row, c + 1, info)
+
+    book.save(path_xlsx)
+
+
+def writeWorkshopLists(badges: List[BadgeInfo], talks: list[Dict], path_xlsx: Union[str, Path]):
+    path_xlsx = Path(path_xlsx)
+    badges = [b for b in badges if len(b.workshops) > 0]
+
+    workshops = [t for t in talks if t['submission_type']['de-formal'].startswith('Workshop')]
+    not_confirmes = [t for t in workshops if t['state'] != 'confirmed']
+    workshops = sorted(workshops, key=lambda t: (t['slot']['start'], t['slot']['room']['de-formal']))
+    for i in range(len(workshops)):
+        talk = workshops[i]
+        talk['title'] = remove_ws(talk['title'])
+
+        if 'room' not in talk['slot']:
+            s = ""
+
+    workshops = {t['title']: t for t in workshops}
+
+    if len(badges) == 0:
+        print('Keine Workshops gefunden', file=sys.stderr)
+        return
+
+    # sortiere nach Workshop
+    workshops_participants: Dict[Tuple, List[BadgeInfo]] = dict()
+
+    rx_ws_name = re.compile(r'(?P<day>[^ ]+) (?P<time>[^ ]+): (?P<name>.+)$')
+
+    # Apply top alignment to cell A1
+    for b in badges:
+        for w in b.workshops:
+            match = rx_ws_name.match(w)
+            ws_day = match.group('day')
+            ws_time = match.group('time')
+            ws_name = match.group('name')
+
+            # k = (ws_day, ws_time, ws_name)
+            workshops_participants[ws_name] = workshops_participants.get(ws_name, []) + [b]
+
+    book = get_workbook(path_xlsx)
+
+    # 1. Übersicht der Workshops + Raum + Zeit
+    sheet = get_sheet('Workshops', book)
+    row = 1
+    for c, n in enumerate(['Tag', 'Zeit', 'Raum', 'Workshop']):
+        sheet.cell(row, 1 + c, n)
+        sheet.cell(row, 1 + c).border = thin_bottom_border
+        sheet.cell(row, 1 + c).font = bold_font
+
+    for ws in sorted(workshops.values(), key=lambda t: (t['slot']['start'], t['slot']['room']['de-formal'])):
+        row += 1
+        dtg = datetime.datetime.fromisoformat(ws['slot']['start'])
+
+        room = ws['slot']['room']['de-formal']
+        for c, value in enumerate([dtg.strftime('%a %d.%m.'),
+                                   dtg.strftime('%H:%M'),
+                                   room,
+                                   ws['title']]):
+            sheet.cell(row, 1 + c, value)
+
+    # 2. Überischt über alle Teilnehmenden
+    sheetAll = get_sheet('All', book)
+
+    row = 1
+    for c, n in enumerate(['Tag', 'Zeit', 'Dauer', 'Raum', 'Workshop', 'Name', 'Vorname', 'Mail', 'Order']):
+        sheetAll.cell(row, 1 + c, n)
+        sheetAll.cell(row, 1 + c).border = thin_bottom_border
+        sheetAll.cell(row, 1 + c).font = bold_font
+
+    for ws in workshops.values():
+        ws_name = ws['title']
+        for badge in sorted(workshops_participants.get(ws_name, []), key=lambda b: (b.name, b.vorname)):
+            row += 1
+            talk: dict = workshops[ws_name]
+            dtg = datetime.datetime.fromisoformat(talk['slot']['start'])
+            duration = talk['duration']
+            room = talk['slot']['room']['de-formal']
+
+            for c, value in enumerate([dtg.strftime('%a %d.%m.'),
+                                       dtg.strftime('%H:%M'),
+                                       duration,
+                                       room, ws_name, badge.name, badge.vorname, badge.mail, badge.order]):
+                sheetAll.cell(row, 1 + c, value)
+
+    table_range = f"A1:G{row}"
+    table = Table(displayName=sheetAll.title, ref=table_range)
+    style = TableStyleInfo(
+        name="TableStyleMedium9",
+        showFirstColumn=False,
+        showLastColumn=False,
+        showRowStripes=True,  # Alternierende Zeilenfarben
+        showColumnStripes=False
+    )
+    sheetAll.add_table(table)
+
+    # write table for each workshop
+    if True:
+        for ws in sorted(workshops.values(), key=lambda t: (t['slot']['start'], t['slot']['room']['de-formal'])):
+            ws_name = ws['title']
+            if ws['state'] != 'confirmed':
+                s = ""
+                continue
+            if ws_name not in workshops_participants:
+                print(f'Keine Teilnehmenden für {ws_name} gefunden', file=sys.stderr)
+
+            participants = sorted(workshops_participants.get(ws_name, []), key=lambda b: (b.vorname, b.name))
+            dtg = datetime.datetime.fromisoformat(ws['slot']['start'])
+            dtg2 = datetime.datetime.fromisoformat(ws['slot']['end'])
+            speakers = [s['name'] for s in ws['speakers']]
+            room = ws['slot']['room']['de-formal']
+            sheet_name = f"{dtg.strftime('%a%H%M')}_{room.split(' ')[0]}"
+            sheet = get_sheet(sheet_name, book)
 
             row = 1
-            for c, n in enumerate(['Tag', 'Zeit', 'Workshop', 'Name', 'Vorname', 'Mail', 'Order']):
-                sheetP.cell(row, 1 + c, n)
+            lines = [['Workshop', ws_name],
+                     ['Tag', dtg.strftime('%a %d.%m.')],
+                     ['Zeit', dtg.strftime('%H:%M')],
+                     ['Ende', dtg2.strftime('%H:%M')],
+                     ['Raum', room],
+                     ['Leitung', ', '.join(speakers)],
+                     [],
+                     ['Name', 'Vorname', 'Mail', 'Order', 'Unterschrift'],
+                     ]
+            for p in participants:
+                lines.append([p.name, p.vorname, p.mail, p.order, ''])
 
-            for ws_key in sorted(ws_keys, key=lambda k:(k[1],k[2])):
-                for badge in sorted(workshops[ws_key], key=lambda b: (b.vorname, b.name)):
-                    row += 1
-                    for c, value in enumerate(list(ws_key) + [badge.name, badge.vorname, badge.mail, badge.order]):
-                        sheetP.cell(row, 1 + c, value)
-            table_range = f"A1:G{row}"
-            table = Table(displayName=f"Tabelle_{day}", ref=table_range)
-            style = TableStyleInfo(
-                name="TableStyleMedium9",
-                showFirstColumn=False,
-                showLastColumn=False,
-                showRowStripes=True,  # Alternierende Zeilenfarben
-                showColumnStripes=False
-            )
-            sheetP.add_table(table)
+            for line in lines:
+                for c, n in enumerate(line):
+                    sheet.cell(row, 1 + c, n)
+                row += 1
 
-    # Automatische Spaltenbreite berechnen
+            r_headline = row - len(participants) - 1
+            for c in range(1, 6):
+                sheet.cell(r_headline, c).border = thin_bottom_border
+                sheet.cell(r_headline, c).font = bold_font
+
+            for r in range(r_headline + 1, row):
+                sheet.row_dimensions[r].height = 30
+                for c in range(1, 6):
+                    sheet.cell(r, c).border = thin_bottom_border
+                    sheet.cell(r, c).alignment = top_alignment
+
+            sheet.merge_cells('B1:D1')
+            sheet.merge_cells('B6:D6')
+
+    # Automatische Spaltenbreiten berechnen
     def enlare_columns(sheet: Worksheet):
+        s = ""
         for col in sheet.columns:
             max_length = 0
-            col_letter = col[0].column_letter  # Holt den Buchstaben der Spalte
-
+            for c in col:
+                if isinstance(c, Cell):
+                    col_letter = c.column_letter  # Holt den Buchstaben der Spalte
+                    break
             for cell in col:
                 try:
+                    if cell.value == 'Unterschrift':
+                        max_length = 40
                     if cell.value:
                         max_length = max(max_length, len(str(cell.value)))
                 except:
@@ -621,10 +733,9 @@ def writeWorkshopLists(badges: List[BadgeInfo], path_xlsx):
     book.save(path_xlsx.as_posix())
 
 
-
 if __name__ == '__main__':
 
-    parser = argparse.ArgumentParser(description='Erstelle Badges & Listen')
+    parser = argparse.ArgumentParser(description='Erstelle Badges & Workshoplisten')
     parser.add_argument('-p', '--pseudodata',
                         required=False,
                         default=False,
@@ -641,19 +752,20 @@ if __name__ == '__main__':
                         default=None,
                         help='Limitiere CSV outputs auf n zeilen',
                         )
+    parser.add_argument('-y', '--year',
+                        type=int,
+                        default=datetime.date.today().year,
+                        help='Jahr der FOSSGIS')
 
     # CSV_LIMIT
     # beschränkt das aus der json generierte CSV auf CSV_LIMIT Zeilen.
     # Gut um schnell zu testen ob das PDF sinnvoll aussieht
-    CSV_LIMIT: int = None
 
     args = parser.parse_args()
 
-    EVENT_ID = '2025'
+    EVENT_ID = f'{args.year}'
     ROOT = Path(__file__).parents[1]
-    DIR_DATA = ROOT / 'data' / EVENT_ID
-    PATH_ITEMS = DIR_DATA / 'items.json'  # Produktdaten
-
+    DIR_JSON = ROOT / 'json'
     DIR_CSV = ROOT / 'csv'
     os.makedirs(DIR_CSV, exist_ok=True)
 
@@ -661,14 +773,22 @@ if __name__ == '__main__':
     if args.pseudodata:
         #  pseudonymisierte Beispieldaten
         print('Create pseudo tickets')
-        badges = readPseudoBadgeInfos(DIR_DATA)
-    else:
-        badges = readBadgeInfos(DIR_DATA)
+        badges = readPseudoBadgeInfos(DIR_JSON)
+        path_csv = DIR_CSV / f'badges{EVENT_ID}_pseudo.csv'
+        writeBadgeCsv(badges, path_csv)
+        exit(0)
+
+    badges = readBadgeInfos(DIR_JSON)
+    talks = readJson(DIR_JSON / 'pretalx_talks.json')
 
     if args.workshoplisten:
         # schreibe Workshop liste
-        path_xlsx = DIR_CSV / f'badges{EVENT_ID}_workshops.xlsx'
-        writeWorkshopLists(badges, path_xlsx)
+        path_xlsx = DIR_CSV / f'{EVENT_ID}_workshops.xlsx'
+        writeWorkshopLists(badges, talks, path_xlsx)
+
+    if True:
+        path_xlsx = DIR_CSV / f'{EVENT_ID}_teilnehmerliste.xlsx'
+        writeParticipantsList(badges, path_xlsx)
 
     if True:
         # 3. Separiere nach Ticket
@@ -676,7 +796,7 @@ if __name__ == '__main__':
 
         ticket_types = {
             'Konferenz': 'conf',
-            'Hackathon': 'hackaton',
+            'Hackathon': 'hackathon',
             'OpenStreetMap': 'osm',
             'Community Sprint': 'sprint',
         }
@@ -686,7 +806,7 @@ if __name__ == '__main__':
             path_csv = DIR_CSV / f'badges{EVENT_ID}_{suffix}.csv'
 
             if args.csv_limit:
-                ticket_badges = ticket_badges[:min(len(ticket_badges),args.csv_limit)]
+                ticket_badges = ticket_badges[:min(len(ticket_badges), args.csv_limit)]
 
             if len(ticket_badges) > 0:
                 writeBadgeCsv(ticket_badges, path_csv)
@@ -704,5 +824,3 @@ if __name__ == '__main__':
         path_csv = DIR_CSV / f'badges{EVENT_ID}_leer.csv'
         writeBadgeCsv(badges, path_csv)
         print(f'{path_csv} : {len(badges)} tickets')
-
-

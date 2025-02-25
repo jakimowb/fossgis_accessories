@@ -16,6 +16,8 @@ docker run --rm -it  namensschilder:latest
 docker run -v $(pwd):/app -it --rm namensschilder:latest
 ```
 
+
+
 ## docker compose
 ```
 docker compose up -d
@@ -23,5 +25,5 @@ docker compose up -d
 
 ### attach to terminal in container:
 ```
-docker exec -it namensschilder sh
+docker exec -it namensschilder bash
 ```

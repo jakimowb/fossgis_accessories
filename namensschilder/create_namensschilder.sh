@@ -12,15 +12,12 @@
 #  CSV = die *.csv datei mit den nötigen Angaben für Aussen- und Innenseite
 # set CSV=bin/badges.empty.csv
 
-export BADGE_CSV=csv/badges2025_hackaton.csv # the input CSV
-export BADGE_PDF=csv/badges2025_conf.pdf # the final PDF
-
 echo "Converting JSON to CSV"
 python3 bin/convert2025.py
 
+echo "create the PDFs in /pdf"
 mkdir -p pdf
 
-# create the PDFs
 for badge_csv in csv/*.csv; do
     if [ -f "$badge_csv" ]; then
 
@@ -32,10 +29,19 @@ for badge_csv in csv/*.csv; do
         jobname="${jobname%.csv}"
 
         echo "Create ${jobname} PDFs"
-        echo "writing invisible site of badges"
-        pdflatex -jobname="pdf/${jobname}_innen" "\newcommand{\BadgeCSV}{$badge_csv} \input{tex/namensschilder_innen.tex}"
-        echo "writing visible site of badges"
-        pdflatex -jobname="pdf/${jobname}_aussen" "\newcommand{\BadgeCSV}{$badge_csv} \input{tex/namensschilder_sichtbar.tex}"
+
+        if [[ $badge_csv =~ .*(pseudo|conf|osm|sprint|hackat)\.csv$ ]]; then
+          echo "writing invisible site of badges"
+          pdflatex -jobname="pdf/${jobname}_innen" "\newcommand{\BadgeCSV}{$badge_csv} \input{tex/namensschilder_innen.tex}"
+          echo "writing visible site of badges"
+          pdflatex -jobname="pdf/${jobname}_aussen" "\newcommand{\BadgeCSV}{$badge_csv} \input{tex/namensschilder_sichtbar.tex}"
+
+        else
+          echo "None"
+          pdflatex -jobname="pdf/${jobname}" "\newcommand{\BadgeCSV}{$badge_csv} \input{tex/namensschilder_sichtbar.tex}"
+        fi
+
+
     fi
 done
 
