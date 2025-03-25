@@ -18,7 +18,7 @@ python3 bin/convert2025.py
 echo "create the PDFs in /pdf"
 mkdir -p pdf
 
-for badge_csv in csv/*.csv; do
+for badge_csv in csv/badges2025_*.csv; do
     if [ -f "$badge_csv" ]; then
 
         echo "Sanitize $badge_csv"
@@ -30,16 +30,28 @@ for badge_csv in csv/*.csv; do
 
         echo "Create ${jobname} PDFs"
 
-        if [[ $badge_csv =~ .*(pseudo|conf|osm|sprint|hackat)\.csv$ ]]; then
-          echo "writing invisible site of badges"
-          pdflatex -jobname="pdf/${jobname}_innen" "\newcommand{\BadgeCSV}{$badge_csv} \input{tex/namensschilder_innen.tex}"
-          echo "writing visible site of badges"
-          pdflatex -jobname="pdf/${jobname}_aussen" "\newcommand{\BadgeCSV}{$badge_csv} \input{tex/namensschilder_sichtbar.tex}"
-
+        if [[ $badge_csv =~ .*(pseudo|conf|osm)\.csv$ ]]; then
+          echo "mit Innenseite"
+          BadgeInnenSeiten=True
         else
-          echo "None"
-          pdflatex -jobname="pdf/${jobname}" "\newcommand{\BadgeCSV}{$badge_csv} \input{tex/namensschilder_sichtbar.tex}"
+          echo "nur Aussenseiten"
+          BadgeInnenSeiten=False
         fi
+        pdflatex -jobname="pdf/${jobname}" \
+                "\newcommand{\BadgeInnenSeiten}{$BadgeInnenSeiten}" \
+                "\newcommand{\BadgeCSV}{$badge_csv}"  \
+                "\input{tex/namensschilder2025.tex}"
+
+
+          #echo "writing invisible site of badges"
+          #pdflatex -jobname="pdf/${jobname}_innen" "\newcommand{\BadgeCSV}{$badge_csv} \input{tex/namensschilder_innen.tex}"
+          #echo "writing visible site of badges"
+          #pdflatex -jobname="pdf/${jobname}_aussen" "\newcommand{\BadgeCSV}{$badge_csv} \input{tex/namensschilder_sichtbar.tex}"
+
+        #else
+        #  echo "None"
+        #  pdflatex -jobname="pdf/${jobname}" "\newcommand{\BadgeCSV}{$badge_csv} \input{tex/namensschilder_sichtbar.tex}"
+        #fi
 
 
     fi

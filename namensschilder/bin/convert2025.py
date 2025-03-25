@@ -11,7 +11,7 @@ import warnings
 from pathlib import Path
 import re
 import sys
-from typing import Dict, List, Optional, Tuple, Union
+from typing import Any, Dict, List, Optional, Tuple, Union
 import os
 
 from openpyxl import load_workbook, Workbook
@@ -91,11 +91,20 @@ class BadgeInfo(object):
         self.ticket: str = ''
         self.exkursionen: List[str] = []
         self.workshops: List[str] = []
+        self.status: str = ''
 
         # weitere zu erfassende Produkte / Fragen
         for q in list(CSV_QUESTIONS.values()) + list(CSV_PRODUCTS.values()):
             assert q not in self.__dict__.keys(), 'Duplicate key: ' + q
             self.__dict__[q] = None
+
+    def __lt__(self, other):
+        assert isinstance(other, BadgeInfo)
+        if self.name != other.name:
+            return self.name < other.name
+        if self.vorname != other.vorname:
+            return self.vorname < other.vorname
+        return self.mail < other.mail
 
     def id(self) -> str:
         return f'{self.order}{self.posid}'
@@ -192,8 +201,17 @@ LUT_Wochennamen = {
     'Sonntag': 'So',
 }
 
+# Pretix Order Status Names
+# https://docs.pretix.eu/dev/api/resources/orders.html
+ORDER_STATUS = {
+    'e': 'expired',
+    'c': 'canceled',
+    'p': 'paid',
+    'n': 'pending',
+}
 
-def readBadgeInfos(dir_json) -> List[BadgeInfo]:
+
+def readBadgeInfos(dir_json, order_status: List[str] = ['p', 'n', 'n', 'e']) -> List[BadgeInfo]:
     BADGES: Dict[str, BadgeInfo] = {}
 
     dir_json = Path(dir_json)
@@ -225,15 +243,11 @@ def readBadgeInfos(dir_json) -> List[BadgeInfo]:
     WORKSHOPS = {pid: p for pid, p in PRODUCTS.items() if pid in WorkshopIDs}
     EXKURSIONEN = {pid: p for pid, p in PRODUCTS.items() if pid in ExkursionIDs}
 
-    SKIP_ORDER_STATE = {
-        'e': 'expired',
-        'c': 'canceled'
-    }
     # Lese Bestellungen
     for order in ORDERS:
         ORDERCODE = order['code']
-        if order['status'] in SKIP_ORDER_STATE:
-            print(f'Order {SKIP_ORDER_STATE[order['status']]}: {ORDERCODE}', file=sys.stderr)
+        if order['status'] not in order_status:
+            print(f'Order {ORDER_STATUS[order['status']]}: {ORDERCODE}', file=sys.stderr)
             continue
         ORDER_BADGES = {}
         # Lese Positionen
@@ -247,16 +261,23 @@ def readBadgeInfos(dir_json) -> List[BadgeInfo]:
         for (pid, pos) in [(pid, pos) for pid, pos in unhandled_positions.items() if pos['item'] in TicketIDs]:
             item_id = pos['item']
             badgeInfo = BadgeInfo(ORDERCODE, pos['positionid'])
+            badgeInfo.status = ORDER_STATUS[order['status']]
             badgeInfo.mail = pos['attendee_email']
 
             name_parts = pos['attendee_name_parts']
+            ticket = TICKETS[item_id]['name']['de']
+            if '_scheme' not in name_parts:
+                print(f'Überspringe Ticket ohne Namen: {ORDERCODE}: "{ticket}"', file=sys.stderr)
+                unhandled_positions.pop(pid)
+                continue
+                s = ""
             if name_parts['_scheme'] == 'given_family':
                 badgeInfo.name = name_parts['family_name']
                 badgeInfo.vorname = name_parts['given_name']
             else:
                 raise NotImplementedError(f"unknown name scheme {name_parts['_scheme']}")
 
-            badgeInfo.ticket = TICKETS[item_id]['name']['de']
+            badgeInfo.ticket = ticket
             badgeInfo.firma = pos['company']
 
             for answer in pos['answers']:
@@ -324,29 +345,63 @@ def readBadgeInfos(dir_json) -> List[BadgeInfo]:
     return list(BADGES.values())
 
 
-def writeBadgeCsv(badgeInfos: List[BadgeInfo], path_csv: Path, fill: bool = True):
+def writeBadgeCsv(badgeInfos: List[BadgeInfo],
+                  path_csv: Path,
+                  fillA4: bool = False,
+                  status: List[str] = ['paid']):
     path_csv = Path(path_csv)
+
+    badgeInfos = [b for b in badgeInfos if b.status in status]
 
     n = len(badgeInfos)
     if n == 0:
         warnings.warn(Warning('empty list of badges'), stacklevel=2)
         return None
 
-    badgeInfos = sorted([p for p in badgeInfos], key=lambda p: (p.name, p.vorname))
+    def is_prio1(badge: BadgeInfo) -> bool:
 
-    if fill:
+        if badge.tb is True:
+            return True
+        if badge.tshirt:
+            return True
+        if badge.tshirt_helfer:
+            return True
+        return False
+
+    # badges mit Tagungsband oder T-Shirt
+    badges_prio1 = [p for p in badgeInfos if is_prio1(p)]
+    prio1_persons = [(p.name, p.vorname, p.order) for p in badges_prio1]
+    badges_prio2 = []
+    for p in badgeInfos:
+        if p not in badges_prio1:
+            k = (p.name, p.vorname, p.order)
+
+            # falls die Person bereits eine prio1 Person ist, füge auch andere Tickets ihr hinzu die
+            # zu ihr in der gleichen Order bestellt wurden
+            if k in prio1_persons:
+                badges_prio1.append(p)
+            else:
+                badges_prio2.append(p)
+
+    badges_prio1 = sorted([p for p in badges_prio1], key=lambda p: (p.name, p.vorname))
+    badges_prio2 = sorted([p for p in badges_prio2], key=lambda p: (p.name, p.vorname))
+
+    badgeInfos = badges_prio1 + badges_prio2
+
+    if fillA4:
         while not len(badgeInfos) % 4 == 0:
             badgeInfos.append(BadgeInfo())
 
     print(f'Write {path_csv}')
-    with (open(path_csv, 'w', encoding='utf-8', newline='') as file):
+    with open(path_csv, 'w', encoding='utf-8', newline='') as file:
 
         # schreibe alle Attribute als CSV Spalte
         p = badgeInfos[0]
         attributes = [k for k in p.__dict__.keys() if not k.startswith('_')]
 
         prio = ['order', 'posid', 'name', 'vorname', 'mail', 'ticket']
-        header = [p for p in prio if p in attributes]
+        header = [p for p in prio if p in attributes] + ['tütenprio']
+        header += ['badge_type', 'badge_name', 'badge_zusatz']
         header += sorted([a for a in attributes if a not in header])
         header += ['needs_check']
 
@@ -355,54 +410,112 @@ def writeBadgeCsv(badgeInfos: List[BadgeInfo], path_csv: Path, fill: bool = True
 
         cnt = 0
         for i, person in enumerate(badgeInfos):
-
             data = {k: person.__dict__.get(k, None) for k in header}
-            for k in list(data.keys()):
-                v = data[k]
-                if isinstance(v, list):
-                    v = [line for line in v if isinstance(line, str) and len(line) > 0]
-                    latex = f'{len(v)}'
-                    if len(v) > 0:
-                        v = [tex_escape(line) for line in v]
-                        if True:
-                            latex += r'\\ -- ' + r' \\ -- '.join(v)
-                        else:
-                            # geht leider nicht, weil
-                            latex += r' \begin{itemize} '
-                            latex += r' \item ' + r' \item '.join(v)
-                            latex += r' \end{itemize}\leavevmode '
-                    else:
-                        latex = '0'
-                    v = latex
-                elif isinstance(v, str):
-                    # if k == 'company':
-                    #    v = replace_strings(v, REPLACE_IN_COMPANIES)
-                    v = tex_escape(v)
-                    pass
-
-                if k in ['name', 'vorname']:
-                    # Füge bei sehr langen Namen ein Leerzeichen ein
-                    # damit auf dem Badge ein Zeilenumbruch entsteht
-                    v = re.sub(r'(B\.?Sc|M\.?Sc|Dipl\.[- ]*(Geogr|Geol|Ing)\.?)[ ]+', '', v)
-                    for rx in DELETE_FROM_NAMES:
-                        v = rx.sub('', v)
-                    v = re.sub(r'\(.+\)', '', v)
-                    v = v.strip()
-                    v = re.split(r'\|', v)[0]
-                    if ',' in v:
-                        print(f'Check "{v}"', file=sys.stderr)
-                        data['needs_check'] = True
-                    parts = re.split(r'[ ]+', v)
-                    for i in range(len(parts)):
-                        part = parts[i]
-                        if len(part) > 15:
-                            parts[i] = re.sub('-', '- ', part)
-                            pass
-                    v = ' '.join(parts)
-                data[k] = v
+            data.update(csv_badge_infos(person))
+            data['tütenprio'] = 1 if person in badges_prio1 else 2
+            csv_texify(data)
             writer.writerow(data)
 
             cnt += 1
+
+    with open(path_csv, 'r') as file:
+        assert len(file.readlines()) == cnt + 1
+
+
+def csv_texify(data: Dict[str, Any]):
+    """
+    Wandelt enige CSV Einträge so um, dass sie gut in LaTeX
+    ausgegeben werden können
+    """
+    for k in list(data.keys()):
+        v = data[k]
+        if isinstance(v, list):
+            v = [line for line in v if isinstance(line, str) and len(line) > 0]
+            latex = f'{len(v)}'
+            if len(v) > 0:
+                v = [tex_escape(line) for line in v]
+                if True:
+                    latex += r'\\ -- ' + r' \\ -- '.join(v)
+                else:
+                    # geht leider nicht, weil
+                    latex += r' \begin{itemize} '
+                    latex += r' \item ' + r' \item '.join(v)
+                    latex += r' \end{itemize}\leavevmode '
+            else:
+                latex = '0'
+            v = latex
+        elif isinstance(v, str):
+            # if k == 'company':
+            #    v = replace_strings(v, REPLACE_IN_COMPANIES)
+            v = tex_escape(v)
+            pass
+
+        if k in ['name', 'vorname']:
+            # Füge bei sehr langen Namen ein Leerzeichen ein
+            # damit auf dem Badge ein Zeilenumbruch entsteht
+            v = re.sub(r'(B\.?Sc|M\.?Sc|Dipl\.[- ]*(Geogr|Geol|Ing)\.?)[ ]+', '', v)
+            for rx in DELETE_FROM_NAMES:
+                v = rx.sub('', v)
+            v = re.sub(r'\(.+\)', '', v)
+            v = v.strip()
+            v = re.split(r'\|', v)[0]
+            if ',' in v:
+                print(f'Check "{v}"', file=sys.stderr)
+                data['needs_check'] = True
+            parts = re.split(r'[ ]+', v)
+            for i in range(len(parts)):
+                part = parts[i]
+                if len(part) > 15:
+                    parts[i] = re.sub('-', '- ', part)
+                    pass
+            v = ' '.join(parts)
+        data[k] = v
+
+
+BADGE_TYPE = {
+    '': 'CONF',  # Default ticket type = FOSSGIS Konferenz CONF
+    'Konferenzticket': 'CONF',
+    'Konferenzticket - reduzierter Preis': 'CONF',
+    'Konferenzticket Beitragende': 'CONF',
+    'Konferenzticket für Helfende': 'CONF',
+    'Konferenzticket für Helfende (bezahlt)': 'CONF',
+    'Konferenzticket Aussteller': 'CONF',
+    'Konferenzticket - Community (OpenStreetMap und FOSSGIS)': 'CONF',
+    'Hackathon #ifgiHACK25': 'HACK',
+    'OpenStreetMap-Samstag': 'OSM',
+    'Community Sprint': 'SPRINT',
+}
+
+BADGE_INFOS_OVERWRITES: Dict[str, Dict[str, str]] = {
+    '<ORDERCODE>': {
+        'badge_type': 'Veranstaltung: = CONF|OSM|HACK|SPRINT',
+        'badge_name': 'Hauptname := Vorname Name|Firma|Nickname',
+        'badge_zusatz': 'Namenszusatz := Firma|Nickname|foobar',
+    }
+}
+
+
+def csv_badge_infos(badge: BadgeInfo) -> Dict[str, str]:
+    d = dict()
+
+    d['badge_type'] = BADGE_TYPE[badge.ticket]
+
+    badge_name = f'{badge.vorname} {badge.name}'
+
+    badge_zusatz = None
+    if badge.schild == 'Name + Firma':
+        badge_zusatz = badge.schild_firma
+    elif badge.schild == 'Name + Nickname':
+        badge_zusatz = badge.schild_nickname
+    elif badge.schild == 'Nickname':
+        badge_name = badge.schild_nickname
+
+    d['badge_name'] = badge_name
+    d['badge_zusatz'] = badge_zusatz
+
+    if badge.order in BADGE_INFOS_OVERWRITES:
+        d.update(BADGE_INFOS_OVERWRITES[badge.order])
+    return d
 
 
 def readPseudoBadgeInfos(dir_data: Union[str, Path]) -> List[BadgeInfo]:
@@ -537,15 +650,17 @@ bold_font = Font(bold=True)
 top_alignment = Alignment(vertical="top")
 
 
-def writeParticipantsList(badges: List[BadgeInfo], path_xlsx: Union[str, Path]):
+def writeTeilnehmerliste(badges: List[BadgeInfo],
+                         path_xlsx: Union[str, Path],
+                         status: List[str] = ['paid']):
     path_xlsx = Path(path_xlsx)
 
-    badges = sorted([b for b in badges if b.tn_liste], key=lambda b: (b.name, b.vorname))
+    badges = sorted([b for b in badges if b.tn_liste and b.status in status])
 
     book = get_workbook(path_xlsx)
     sheet = get_sheet('Teilnehmer', book)
 
-    sheet.cell(1, 1, 'Teilnehmer FOSSGIS 2025')
+    sheet.cell(1, 1, 'Teilnehmerliste FOSSGIS 2025')
     sheet.merge_cells('A1:D1')
     row = 3
     for c, n in enumerate(['Name', 'Vorname', 'Email', 'Firma/Organisation']):
@@ -559,13 +674,110 @@ def writeParticipantsList(badges: List[BadgeInfo], path_xlsx: Union[str, Path]):
 
         for c, info in enumerate(infos):
             sheet.cell(row, c + 1, info)
-
+    enlarge_columns(sheet)
     book.save(path_xlsx)
+
+
+def writeAllOrders(badges: List[BadgeInfo], path_xlsx: Union[str, Path]):
+    path_xlsx = Path(path_xlsx)
+    book = get_workbook(path_xlsx)
+    badges = sorted(badges)
+    sheet = get_sheet('Alle Tickets', book)
+    sheet.cell(1, 1, 'FOSSGIS 2025 - Alle Bestellungen')
+    sheet.merge_cells('A1:D1')
+    row = 3
+    for c, n in enumerate(
+            ['Name', 'Vorname', 'Order', 'Email', 'Status', 'Ticket' 'AV', 'TB', 'T-Shirt', 'T-Shirt-Helfer',
+             'Workshops']):
+        sheet.cell(row, c + 1, n)
+        sheet.cell(row, c + 1).border = thin_bottom_border
+        sheet.cell(row, c + 1).font = bold_font
+
+    for b in badges:
+        row += 1
+        infos = [b.name, b.vorname, b.order, b.mail, b.status, b.ticket, b.av, b.tb]
+
+        for c, info in enumerate(infos):
+            sheet.cell(row, c + 1, info)
+    enlarge_columns(sheet)
+    book.save(path_xlsx)
+
+
+def writeCancelations(badges: List[BadgeInfo], path_xlsx: Union[str, Path]):
+    path_xlsx = Path(path_xlsx)
+    badges = sorted([b for b in badges if b.status == 'canceled'])
+    book = get_workbook(path_xlsx)
+    sheet = get_sheet('Stornierungen', book)
+    sheet.cell(1, 1, 'Stornierung FOSSGIS 2025')
+    sheet.merge_cells('A1:D1')
+    row = 3
+    for c, n in enumerate(['Name', 'Vorname', 'Order', 'Email', 'status']):
+        sheet.cell(row, c + 1, n)
+        sheet.cell(row, c + 1).border = thin_bottom_border
+        sheet.cell(row, c + 1).font = bold_font
+
+    for b in badges:
+        row += 1
+        infos = [b.name, b.vorname, b.order, b.mail, b.status]
+
+        for c, info in enumerate(infos):
+            sheet.cell(row, c + 1, info)
+    enlarge_columns(sheet)
+    book.save(path_xlsx)
+
+
+def writeHelferTShirtList(badges: List[BadgeInfo], path_xlsx: Union[str, Path]):
+    path_xlsx = Path(path_xlsx)
+
+    badges = sorted([b for b in badges if b.tshirt_helfer])
+
+    book = get_workbook(path_xlsx)
+    sheet = get_sheet('Teilnehmer', book)
+
+    sheet.cell(1, 1, 'Helfer-T-Shirts FOSSGIS 2025')
+    sheet.merge_cells('A1:D1')
+    row = 3
+    for c, n in enumerate(['Name', 'Vorname', 'Order', 'Email', 'Helfer T-Shirt']):
+        sheet.cell(row, c + 1, n)
+        sheet.cell(row, c + 1).border = thin_bottom_border
+        sheet.cell(row, c + 1).font = bold_font
+
+    for b in badges:
+        row += 1
+        infos = [b.name, b.vorname, b.order, b.mail, b.tshirt_helfer]
+
+        for c, info in enumerate(infos):
+            sheet.cell(row, c + 1, info)
+    enlarge_columns(sheet)
+    book.save(path_xlsx)
+
+
+def enlarge_columns(sheet: Worksheet):
+    """
+    Vergrößert die Spaltenbreiten
+    """
+    # Automatische Spaltenbreiten berechnen
+    for col in sheet.columns:
+        max_length = 0
+        for c in col:
+            if isinstance(c, Cell):
+                col_letter = c.column_letter  # Holt den Buchstaben der Spalte
+                break
+        for cell in col:
+            try:
+                if cell.value == 'Unterschrift':
+                    max_length = 40
+                if cell.value:
+                    max_length = max(max_length, len(str(cell.value)))
+            except:
+                pass
+
+        sheet.column_dimensions[col_letter].width = max_length + 2  # Puffer hinzufügen
 
 
 def writeWorkshopLists(badges: List[BadgeInfo], talks: list[Dict], path_xlsx: Union[str, Path]):
     path_xlsx = Path(path_xlsx)
-    badges = [b for b in badges if len(b.workshops) > 0]
+    badges = [b for b in badges if len(b.workshops) > 0 and b.status in ['paid']]
 
     workshops = [t for t in talks if t['submission_type']['de-formal'].startswith('Workshop')]
     not_confirmes = [t for t in workshops if t['state'] != 'confirmed']
@@ -705,29 +917,9 @@ def writeWorkshopLists(badges: List[BadgeInfo], talks: list[Dict], path_xlsx: Un
             sheet.merge_cells('B1:D1')
             sheet.merge_cells('B6:D6')
 
-    # Automatische Spaltenbreiten berechnen
-    def enlare_columns(sheet: Worksheet):
-        s = ""
-        for col in sheet.columns:
-            max_length = 0
-            for c in col:
-                if isinstance(c, Cell):
-                    col_letter = c.column_letter  # Holt den Buchstaben der Spalte
-                    break
-            for cell in col:
-                try:
-                    if cell.value == 'Unterschrift':
-                        max_length = 40
-                    if cell.value:
-                        max_length = max(max_length, len(str(cell.value)))
-                except:
-                    pass
-
-            sheet.column_dimensions[col_letter].width = max_length + 2  # Puffer hinzufügen
-
     for s in book.sheetnames:
         sheet = book[s]
-        enlare_columns(sheet)
+        enlarge_columns(sheet)
 
     path_xlsx = Path(path_xlsx)
     book.save(path_xlsx.as_posix())
@@ -770,7 +962,7 @@ if __name__ == '__main__':
     os.makedirs(DIR_CSV, exist_ok=True)
 
     # 1. read badges
-    if args.pseudodata:
+    if False or args.pseudodata:
         #  pseudonymisierte Beispieldaten
         print('Create pseudo tickets')
         badges = readPseudoBadgeInfos(DIR_JSON)
@@ -788,32 +980,48 @@ if __name__ == '__main__':
 
     if True:
         path_xlsx = DIR_CSV / f'{EVENT_ID}_teilnehmerliste.xlsx'
-        writeParticipantsList(badges, path_xlsx)
+        writeTeilnehmerliste(badges, path_xlsx, status=['paid'])
+
+        path_xlsx = DIR_CSV / f'{EVENT_ID}_helfertshirts.xlsx'
+        writeHelferTShirtList(badges, path_xlsx)
+
+        path_xls = DIR_CSV / f'{EVENT_ID}_cancelations.xlsx'
+        writeCancelations(badges, path_xls, status=['canceled'])
+
+        path_xlsx = DIR_CSV / f'{EVENT_ID}_AlleBestellungen.xlsx'
+        writeAllOrders(badges, path_xlsx)
 
     if True:
-        # 3. Separiere nach Ticket
-        tickets = set([b.ticket for b in badges])
+        # Schreibe CSV dateien
+        if False:
+            # Schreibe ein großes CSV
+            path_csv = DIR_CSV / f'badges{EVENT_ID}_tickets.csv'
+            writeBadgeCsv(badges, path_csv, status=['paid'])
 
-        ticket_types = {
-            'Konferenz': 'conf',
-            'Hackathon': 'hackathon',
-            'OpenStreetMap': 'osm',
-            'Community Sprint': 'sprint',
-        }
+        else:
+            # Separiere badges nach Ticket-Typ
+            tickets = set([b.ticket for b in badges])
 
-        for prefix, suffix in ticket_types.items():
-            ticket_badges = [v for v in badges if v.ticket.startswith(prefix)]
-            path_csv = DIR_CSV / f'badges{EVENT_ID}_{suffix}.csv'
+            ticket_types = {
+                # file suffix: ticket name prefix
+                'confosm': re.compile(r'^(Konferenz|OpenStreetMap)'),
+                'hackathon': re.compile(r'^Hackathon'),
+                'sprint': re.compile(r'^Community Sprint'),
+            }
+            for suffix, rx_prefix in ticket_types.items():
 
-            if args.csv_limit:
-                ticket_badges = ticket_badges[:min(len(ticket_badges), args.csv_limit)]
+                ticket_badges = [v for v in badges if rx_prefix.search(v.ticket)]
+                path_csv = DIR_CSV / f'badges{EVENT_ID}_{suffix}.csv'
 
-            if len(ticket_badges) > 0:
-                writeBadgeCsv(ticket_badges, path_csv)
-                print(f'{path_csv} : {len(ticket_badges)} tickets')
-            else:
-                warnings.warn(f'No "{prefix}" tickets found')
-    if True:
+                if args.csv_limit:
+                    ticket_badges = ticket_badges[:min(len(ticket_badges), args.csv_limit)]
+
+                if len(ticket_badges) > 0:
+                    writeBadgeCsv(ticket_badges, path_csv, status=['paid'])
+                    print(f'{path_csv} : {len(ticket_badges)} tickets')
+                else:
+                    warnings.warn(f'No "{suffix}={rx_prefix}" tickets found')
+    if False:
         # Füge leere Badges hinzu und
         emptyBadges = 30
         # Fülle auf A4 Blatt auf (4 Badges pro Blatt)
@@ -824,3 +1032,5 @@ if __name__ == '__main__':
         path_csv = DIR_CSV / f'badges{EVENT_ID}_leer.csv'
         writeBadgeCsv(badges, path_csv)
         print(f'{path_csv} : {len(badges)} tickets')
+
+    print('Done')
