@@ -687,18 +687,31 @@ def writeAllOrders(badges: List[BadgeInfo], path_xlsx: Union[str, Path]):
     sheet.merge_cells('A1:D1')
     row = 3
     for c, n in enumerate(
-            ['Name', 'Vorname', 'Order', 'Email', 'Status', 'Ticket' 'AV', 'TB', 'T-Shirt', 'T-Shirt-Helfer',
+            ['Name', 'Vorname', 'Order', 'Email', 'Status', 'Ticket',
+             'AV', 'TB', 'T-Shirt', 'T-Shirt-Helfer',
              'Workshops']):
         sheet.cell(row, c + 1, n)
         sheet.cell(row, c + 1).border = thin_bottom_border
         sheet.cell(row, c + 1).font = bold_font
 
+    row_start = row
     for b in badges:
         row += 1
-        infos = [b.name, b.vorname, b.order, b.mail, b.status, b.ticket, b.av, b.tb]
+        infos = [b.name, b.vorname, b.order, b.mail, b.status, b.ticket,
+                 b.av, b.tb, b.tshirt, b.tshirt_helfer, '\n'.join(b.workshops)]
 
         for c, info in enumerate(infos):
             sheet.cell(row, c + 1, info)
+
+    table = Table(displayName="TabelleBestellungen", ref=f'A{row_start}:K{row}')
+    table.tableStyleInfo = TableStyleInfo(
+        name="TableStyleMedium9",
+        showFirstColumn=False,
+        showLastColumn=False,
+        showRowStripes=True,  # Alternierende Zeilenfarben
+        showColumnStripes=False
+    )
+    sheet.add_table(table)
     enlarge_columns(sheet)
     book.save(path_xlsx)
 
@@ -973,7 +986,7 @@ if __name__ == '__main__':
     badges = readBadgeInfos(DIR_JSON)
     talks = readJson(DIR_JSON / 'pretalx_talks.json')
 
-    if args.workshoplisten:
+    if True:
         # schreibe Workshop liste
         path_xlsx = DIR_CSV / f'{EVENT_ID}_workshops.xlsx'
         writeWorkshopLists(badges, talks, path_xlsx)
@@ -986,7 +999,7 @@ if __name__ == '__main__':
         writeHelferTShirtList(badges, path_xlsx)
 
         path_xls = DIR_CSV / f'{EVENT_ID}_cancelations.xlsx'
-        writeCancelations(badges, path_xls, status=['canceled'])
+        writeCancelations(badges, path_xls)
 
         path_xlsx = DIR_CSV / f'{EVENT_ID}_AlleBestellungen.xlsx'
         writeAllOrders(badges, path_xlsx)
